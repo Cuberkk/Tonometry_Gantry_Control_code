@@ -85,28 +85,57 @@ class QuadratureEncoder:
             self._pi.set_mode(pin, pigpio.INPUT)
             self._pi.set_pull_up_down(pin, pigpio.PUD_UP)
 
+        glitch_us = 200   # use 100 us
+        self._pi.set_glitch_filter(self.gpio_a, glitch_us)
+        self._pi.set_glitch_filter(self.gpio_b, glitch_us)
+
         self._last_state = (self._pi.read(self.gpio_a) << 1) | self._pi.read(self.gpio_b)
         self._cb_a = self._pi.callback(self.gpio_a, pigpio.EITHER_EDGE, self._pulse)
         self._cb_b = self._pi.callback(self.gpio_b, pigpio.EITHER_EDGE, self._pulse)
 
-    def _pulse(self, _gpio, _level, _tick):
-        a = self._pi.read(self.gpio_a)
-        b = self._pi.read(self.gpio_b)
-        new_state = (a << 1) | b
-        prev_state = self._last_state
-        if new_state == prev_state:
-            return
-        transition = ((prev_state << 2) | new_state) & 0b1111
-        delta = self._TRANSITIONS.get(transition)
-        self._last_state = new_state
-        if delta is None:
-            return
+    # def _pulse(self, _gpio, _level, _tick):
+    #     a = self._pi.read(self.gpio_a)
+    #     b = self._pi.read(self.gpio_b)
+    #     new_state = (a << 1) | b
+    #     prev_state = self._last_state
+    #     if new_state == prev_state:
+    #         return
+    #     transition = ((prev_state << 2) | new_state) & 0b1111
+    #     delta = self._TRANSITIONS.get(transition)
+    #     self._last_state = new_state
+    #     if delta is None:
+    #         return
+    #     with self._lock:
+    #         self._position += self._invert * delta
+
+    def _pulse(self, gpio, level, tick):
+        if level not in (0, 1):
+            return  # ignore watchdog or bad levels
+
         with self._lock:
-            self._position += self._invert * delta
+            prev_state = self._last_state
+
+            # Update only the bit that changed using callback args
+            if gpio == self.gpio_a:
+                a = level
+                b = prev_state & 0b01
+            else:  # gpio == self.gpio_b
+                b = level
+                a = (prev_state >> 1) & 0b01
+
+            new_state = (a << 1) | b
+            if new_state == prev_state:
+                return
+
+            transition = ((prev_state << 2) | new_state) & 0b1111
+            delta = self._TRANSITIONS.get(transition)
+            self._last_state = new_state
+
+            if delta is not None:
+                self._position += self._invert * delta
 
     def get_position(self) -> int:
-        with self._lock:
-            return int(self._position)
+        return int(self._position)
 
     def set_position(self, value: int = 0):
         with self._lock:

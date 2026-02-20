@@ -50,7 +50,7 @@ class ControllerApp(tk.Tk):
                 self.encoder_error = str(exc)
 
         self.gantry = AxisManual("Gantry", (2, 3), (config.MOTOR_INVERT[2], config.MOTOR_INVERT[3]))
-        self.weights_manual = AxisManual("Weights", (1,), (config.MOTOR_INVERT[1],), torque_floor=400)
+        self.weights_manual = AxisManual("Weights", (1,), (config.MOTOR_INVERT[1],), torque_floor=config.TORQUE_FLOOR)
 
         self.estopped = False
 
@@ -58,6 +58,7 @@ class ControllerApp(tk.Tk):
         self.weights_bottom_target = tk.IntVar(value=config.WEIGHTS_BOTTOM_DEFAULT)
         self.weights_tolerance = tk.IntVar(value=config.WEIGHTS_TOLERANCE_DEFAULT)
         self.pid_kp = tk.DoubleVar(value=config.WEIGHTS_PID_KP)
+        self.pid_ki = tk.DoubleVar(value=config.WEIGHTS_PID_KI)
         self.pid_kd = tk.DoubleVar(value=config.WEIGHTS_PID_KD)
         self.pid_deadband = tk.DoubleVar(value=config.WEIGHTS_PID_DEADBAND)
         self.pid_min_output = tk.DoubleVar(value=config.WEIGHTS_PID_MIN_OUTPUT)
@@ -84,6 +85,8 @@ class ControllerApp(tk.Tk):
         self._sequence_status_text = "Sequence idle"
         self.sequence_logging_owned = False
 
+        self.manual_control = tk.BooleanVar(value=True)
+        self.manual_control.trace_add("write", lambda *_: self._update_control_mode())
         self._build_ui()
         self._update_tolerance_label()
 
@@ -97,6 +100,8 @@ class ControllerApp(tk.Tk):
 
         self.bind("<Escape>", self.emergency_stop)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+
 
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
@@ -213,17 +218,25 @@ class ControllerApp(tk.Tk):
         self.btn_weights_set_bottom = ttk.Button(row3, text="Set Current", command=lambda: self._set_target_from_current("bottom"))
         self.btn_weights_set_bottom.pack(side=tk.LEFT)
 
+        row7 = ttk.Frame(f)
+        row7.pack(fill=tk.X, padx=8, pady=(4, 2))
+        self.chk_retension = ttk.Checkbutton(
+            row7,
+            text="Manual Control Mode",
+            variable=self.manual_control,
+        )
+        self.chk_retension.pack(side=tk.LEFT, padx=(12, 0))
+
         row4 = ttk.Frame(f)
         row4.pack(fill=tk.X, padx=8, pady=(6, 2))
-
         ttk.Label(row4, text="Manual control:").pack(side=tk.LEFT)
         self.btn_weights_manual_up = ttk.Button(row4, text="▲ Hold UP")
         self.btn_weights_manual_up.pack(side=tk.LEFT, padx=(6, 6))
         self.btn_weights_manual_down = ttk.Button(row4, text="▼ Hold DOWN")
         self.btn_weights_manual_down.pack(side=tk.LEFT)
-        self.btn_weights_manual_up.bind("<ButtonPress-1>", lambda _e: self._weights_manual_press(+1))
+        self.btn_weights_manual_up.bind("<ButtonPress-1>", lambda _e: self._weights_manual_press_up(+1))
         self.btn_weights_manual_up.bind("<ButtonRelease-1>", self._weights_manual_release)
-        self.btn_weights_manual_down.bind("<ButtonPress-1>", lambda _e: self._weights_manual_press(-1))
+        self.btn_weights_manual_down.bind("<ButtonPress-1>", lambda _e: self._weights_manual_press_down(-1))
         self.btn_weights_manual_down.bind("<ButtonRelease-1>", self._weights_manual_release)
 
         row5 = ttk.Frame(f)
@@ -238,8 +251,10 @@ class ControllerApp(tk.Tk):
 
         ttk.Label(row6, text="Kp:").grid(row=0, column=0, padx=(4, 2), pady=2)
         tk.Entry(row6, width=8, textvariable=self.pid_kp).grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(row6, text="Kd:").grid(row=0, column=2, padx=(4, 2))
-        tk.Entry(row6, width=8, textvariable=self.pid_kd).grid(row=0, column=3, padx=(0, 8))
+        ttk.Label(row6, text="Ki:").grid(row=0, column=2, padx=(4, 2))
+        tk.Entry(row6, width=8, textvariable=self.pid_ki).grid(row=0, column=3, padx=(0, 8))
+        ttk.Label(row6, text="Kd:").grid(row=0, column=4, padx=(4, 2))
+        tk.Entry(row6, width=8, textvariable=self.pid_kd).grid(row=0, column=5, padx=(0, 8))
 
         ttk.Label(row6, text="Deadband (cnt):").grid(row=1, column=0, padx=(4, 2), pady=2, columnspan=2, sticky="w")
         tk.Entry(row6, width=8, textvariable=self.pid_deadband).grid(row=1, column=2, padx=(0, 8))
@@ -327,6 +342,17 @@ class ControllerApp(tk.Tk):
 
     # ---------- callbacks ----------
 
+    def manual_control_enabled_loop(self) -> bool:
+        while True:
+            if not self.weights_controller:
+                continue
+            if self.manual_control:
+                self.weights_controller._pause.clear()
+            else:
+                self.weights_controller._pause.set()
+            time.sleep(0.05)
+
+
     def _on_weight_speed(self, value: str):
         if self.weights_controller:
             self.weights_controller.set_speed_percent(float(value))
@@ -351,18 +377,23 @@ class ControllerApp(tk.Tk):
             self.weights_bottom_target.set(current)
         self.lbl_status.config(text=f"Set {target} target to {current} counts")
 
-    def _weights_manual_press(self, direction: int):
-        if self.estopped:
+    def _weights_manual_press_up(self, direction: int):
+        if self.estopped or not self.manual_control.get():
             return
-        if self.weights_controller:
-            self.weights_controller.stop()
-        if self.weights_controller:
-            self.weights_controller.stop(coast=True)
         self.weights_manual.dir = 1 if direction > 0 else -1
         self.weights_manual.apply(self.mot)
         self.var_weights_cmd.set(f"{self.weights_manual.last_cmd:+d}")
 
+    def _weights_manual_press_down(self, direction: int):
+        if self.estopped or not self.manual_control.get():
+            return
+        self.weights_manual.dir = 1 if direction > 0 else -1
+        self.weights_manual.apply(self.mot, config.MANUAL_DOWN_SPEED_PCT)
+        self.var_weights_cmd.set(f"{self.weights_manual.last_cmd:+d}")
+
     def _weights_manual_release(self, _event=None):
+        if not self.manual_control.get():
+            return
         self.weights_manual.brake(self.mot)
         if self.weights_controller and not self.sequence_running and not self.estopped:
             self.weights_controller.stop()
@@ -370,42 +401,51 @@ class ControllerApp(tk.Tk):
 
     def _move_weights_with_speed(self, target: int, speed_override: float | None = None, retension: bool = False, label: str = "") -> bool:
         """Move weights to a target with optional temporary speed override and retension lift."""
-        wc = self.weights_controller
-        if not wc:
+        if not self.weights_controller:
             return False
-        prev_speed = wc.speed_percent
+        prev_speed = self.weights_controller.speed_percent
         success = False
         try:
+            # Change the commanded speed
             if speed_override is not None:
-                wc.set_speed_percent(speed_override)
-            wc.move_to(int(target))
+                self.weights_controller.set_speed_percent(speed_override)
+            else:
+                self.weights_controller.set_speed_percent(config.PID_LIFT_SPEED_PCT)
+            # Set the target position
+            self.weights_controller.move_to(int(target))
+
+            # Print out the command information
             if label:
                 self.lbl_status.config(text=f"Moving weights to {label} ({target} counts)")
+            
             success = self._wait_for_weights_target(target, timeout=120.0)
+
+
             if retension and config.WEIGHTS_BOTTOM_RETENSION_COUNTS > 0 and success:
                 up_target = int(target) + int(config.WEIGHTS_BOTTOM_RETENSION_COUNTS)
-                wc.set_speed_percent(config.WEIGHTS_BOTTOM_RETENSION_SPEED_PCT)
+                self.weights_controller.set_speed_percent(config.WEIGHTS_BOTTOM_RETENSION_SPEED_PCT)
                 self.lbl_status.config(text=f"Retensioning (+{config.WEIGHTS_BOTTOM_RETENSION_COUNTS} counts)")
-                wc.move_to(up_target)
+                self.weights_controller.move_to(up_target)
                 success = self._wait_for_weights_target(up_target, timeout=20.0) and success
         finally:
-            wc.set_speed_percent(prev_speed)
+            self.weights_controller.set_speed_percent(prev_speed)
         return success
 
     def move_weights_to_top(self):
-        if not self.weights_controller:
+        if not self.weights_controller or self.manual_control.get():
+            print("Button Disabled")
             return
         target = int(self.weights_top_target.get())
         self._move_weights_with_speed(target, label="top")
 
     def move_weights_to_bottom(self):
-        if not self.weights_controller:
+        if not self.weights_controller or self.manual_control.get():
             return
         target = int(self.weights_bottom_target.get())
         self._move_weights_with_speed(
             target,
             speed_override=config.WEIGHTS_BOTTOM_SLOW_SPEED_PCT,
-            retension=True,
+            # retension=True,
             label="bottom",
         )
 
@@ -432,6 +472,7 @@ class ControllerApp(tk.Tk):
     def _save_pid_settings(self):
         try:
             kp = float(self.pid_kp.get())
+            ki = float(self.pid_ki.get())
             kd = float(self.pid_kd.get())
             deadband = float(self.pid_deadband.get())
             min_output = float(self.pid_min_output.get())
@@ -441,6 +482,7 @@ class ControllerApp(tk.Tk):
 
         if self.weights_controller:
             self.weights_controller.pid.kp = kp
+            self.weights_controller.pid.ki = ki
             self.weights_controller.pid.kd = kd
             self.weights_controller.pid.reset()
             self.weights_controller.pid_deadband = deadband
@@ -450,6 +492,7 @@ class ControllerApp(tk.Tk):
         data = config.load_calibration()
         pid_cfg = data.setdefault("weights_pid", {})
         pid_cfg["kp"] = kp
+        pid_cfg["ki"] = ki
         pid_cfg["kd"] = kd
         pid_cfg["deadband_counts"] = deadband
         pid_cfg["min_output"] = min_output
@@ -488,6 +531,30 @@ class ControllerApp(tk.Tk):
             if btn is not None:
                 btn.config(state=state_motion)
         self._update_sequence_controls()
+
+    def _update_control_mode(self):
+        if not self.weights_controller:
+            return
+        state_1 = tk.NORMAL if self.manual_control.get() else tk.DISABLED
+        state_2 = tk.DISABLED if self.manual_control.get() else tk.NORMAL
+        if self.manual_control.get():
+            self.weights_controller._pause.clear()
+        else:
+            self.weights_controller._pause.set()
+        for btn in (
+            getattr(self, "btn_weights_manual_up", None),
+            getattr(self, "btn_weights_manual_down", None),
+        ):
+            if btn is not None:
+                btn.config(state=state_1)
+
+        for btn in (
+            getattr(self, "btn_weights_go_top", None),
+            getattr(self, "btn_weights_go_bottom", None),
+        ):
+            if btn is not None:
+                btn.config(state=state_2)
+
 
     def _update_tolerance_label(self):
         try:
@@ -619,18 +686,6 @@ class ControllerApp(tk.Tk):
                     success = False
                     break
 
-                self._set_sequence_status(f"Cycle {idx}/{cycles}: moving to top")
-                if not self._move_weights_with_speed(top_target, label="top"):
-                    success = False
-                    break
-                if not self._sleep_with_cancel(top_dwell):
-                    success = False
-                    break
-
-                if self.sequence_stop.is_set() or self.estopped:
-                    success = False
-                    break
-
                 self._set_sequence_status(f"Cycle {idx}/{cycles}: moving to bottom")
                 if not self._move_weights_with_speed(
                     bottom_target,
@@ -643,16 +698,28 @@ class ControllerApp(tk.Tk):
                     success = False
                     break
 
-                if config.WEIGHTS_BOTTOM_RETENSION_COUNTS > 0:
-                    self._set_sequence_status(f"Cycle {idx}/{cycles}: retensioning")
-                    ret_target = bottom_target + config.WEIGHTS_BOTTOM_RETENSION_COUNTS
-                    if not self._move_weights_with_speed(
-                        ret_target,
-                        speed_override=config.WEIGHTS_BOTTOM_RETENSION_SPEED_PCT,
-                        label="retension",
-                    ):
-                        success = False
-                        break
+                if self.sequence_stop.is_set() or self.estopped:
+                    success = False
+                    break
+
+                self._set_sequence_status(f"Cycle {idx}/{cycles}: moving to top")
+                if not self._move_weights_with_speed(top_target, label="top"):
+                    success = False
+                    break
+                if not self._sleep_with_cancel(top_dwell):
+                    success = False
+                    break
+
+                # if config.WEIGHTS_BOTTOM_RETENSION_COUNTS > 0:
+                #     self._set_sequence_status(f"Cycle {idx}/{cycles}: retensioning")
+                #     ret_target = bottom_target + config.WEIGHTS_BOTTOM_RETENSION_COUNTS
+                #     if not self._move_weights_with_speed(
+                #         ret_target,
+                #         speed_override=config.WEIGHTS_BOTTOM_RETENSION_SPEED_PCT,
+                #         label="retension",
+                #     ):
+                #         success = False
+                #         break
 
                 completed = idx
 
@@ -684,17 +751,16 @@ class ControllerApp(tk.Tk):
         while True:
             if self.sequence_stop.is_set() or self.estopped:
                 return False
-            wc = self.weights_controller
-            if wc is None:
+            if self.weights_controller is None:
                 return False
             current = self.encoder.get_position() if self.encoder else None
-            if current is not None and abs(int(target) - int(current)) <= wc.tolerance_counts:
+            if current is not None and abs(int(target) - int(current)) <= self.weights_controller.tolerance_counts:
                 return True
-            if wc.state == "at target" and wc.target_position is None:
+            if self.weights_controller._arrive_flag and self.weights_controller.target_position is None:
                 return True
             if timeout is not None and (time.time() - start) > timeout:
                 return False
-            time.sleep(0.05)
+            time.sleep(0.1)
 
     def _sleep_with_cancel(self, duration: float) -> bool:
         if duration <= 0:
@@ -807,7 +873,7 @@ class ControllerApp(tk.Tk):
         next_time = time.time()
         while not self.logger_stop.is_set():
             next_time += interval
-            ts_iso = datetime.datetime.now().isoformat()
+            ts_iso = time.time()
             encoder = self.encoder.get_position() if self.encoder else ""
             lvdt_v = self.adc.latest_v if self.adc and self.adc.enabled else ""
             lvdt_mm = self.adc.latest_pos if self.adc and self.adc.enabled else ""

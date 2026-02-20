@@ -23,21 +23,26 @@ class AxisManual:
         self.last_cmd = 0
         self.torque_floor = config.TORQUE_FLOOR if torque_floor is None else int(torque_floor)
 
-    def _map_speed(self) -> int:
-        pct = max(0.0, min(100.0, float(self.speed_percent)))
+    def _map_speed(self, speed_percent: float) -> int:
+        pct = max(0.0, min(100.0, float(speed_percent)))
         if pct <= 0.0:
             return 0
         cmd = int((pct / 100.0) * config.MOTORON_MAX)
         cmd = max(cmd, self.torque_floor)
         return min(cmd, config.MOTORON_MAX)
 
-    def apply(self, mot: Motoron):
+    def apply(self, mot: Motoron, mag_percent: int = None):
         if self.dir == 0:
             for m in self.motor_ids:
                 mot.set_speed(m, 0)
             self.last_cmd = 0
             return
-        mag = self._map_speed()
+        if mag_percent is None:
+            mag = self._map_speed(self.speed_percent)
+        else:
+            mag = self._map_speed(mag_percent)
+
+        # print(f"cmd:{mag}")
         raw = mag if self.dir > 0 else -mag
         self.last_cmd = raw
         for m, inv in zip(self.motor_ids, self.motor_invert):
@@ -52,32 +57,105 @@ class AxisManual:
 
 
 class PIDController:
-    """Minimal PD helper used by the weights axis (no integral term)."""
+    """PID controller with integral term + anti-windup + output clamp."""
 
-    def __init__(self, kp: float, ki: float, kd: float, output_limits: tuple[float, float]):
+    def __init__(
+        self,
+        kp: float,
+        ki: float,
+        kd: float,
+        output_limits: tuple[float, float],
+        integral_limits: tuple[float, float] | None = None,
+    ):
         self.kp = float(kp)
+        self.ki = float(ki)
         self.kd = float(kd)
         self.output_limits = (float(output_limits[0]), float(output_limits[1]))
+
+        # Integral state clamping (prevents windup)
+        self.integral_limits = None
+        if integral_limits is not None:
+            self.integral_limits = (float(integral_limits[0]), float(integral_limits[1]))
+
+        # Optional: use derivative on measurement to reduce derivative kick
+
         self.reset()
 
     def reset(self):
         self._prev_error = None
+        self._prev_measurement = None
+        self._integral = 0.0
 
-    def compute(self, error: float, dt: float) -> float:
+    def compute(self, error: float, dt: float,) -> float:
+        # Basic dt sanity
         if dt <= 0.0:
             dt = 1e-3
-        proportional = self.kp * error
-        derivative = 0.0
-        if self._prev_error is not None:
-            derivative = self.kd * (error - self._prev_error) / dt
+
+        # P
+        p = self.kp * error
+
+        # I (tentatively integrate; may be corrected by anti-windup below)
+        self._integral += error * dt
+        if self.integral_limits is not None:
+            lo_i, hi_i = self.integral_limits
+            self._integral = max(lo_i, min(hi_i, self._integral))
+        i = self.ki * self._integral
+
+        # D
+        d = 0.0
+        if self.kd != 0.0:
+            if self._prev_error is not None:
+                d = self.kd * (error - self._prev_error) / dt
+
         self._prev_error = error
-        output = proportional + derivative
+
+        # Unclamped output
+        u = p + i + d
+
+        # Output clamp + anti-windup (back-calculate by undoing the last integration step)
         low, high = self.output_limits
-        if output > high:
-            output = high
-        elif output < low:
-            output = low
-        return output
+        u_sat = max(low, min(high, u))
+
+        if self.ki != 0.0 and u_sat != u:
+            # If saturated, revert this step's integral accumulation (simple, robust)
+            self._integral -= error * dt
+            if self.integral_limits is not None:
+                lo_i, hi_i = self.integral_limits
+                self._integral = max(lo_i, min(hi_i, self._integral))
+            # Recompute i and saturated output (optional but cleaner)
+            i = self.ki * self._integral
+            u = p + i + d
+            u_sat = max(low, min(high, u))
+
+        return u_sat
+
+# class PIDController:
+#     """Minimal PD helper used by the weights axis (no integral term)."""
+
+#     def __init__(self, kp: float, ki: float, kd: float, output_limits: tuple[float, float]):
+#         self.kp = float(kp)
+#         self.kd = float(kd)
+#         self.output_limits = (float(output_limits[0]), float(output_limits[1]))
+#         self.reset()
+
+#     def reset(self):
+#         self._prev_error = None
+
+#     def compute(self, error: float, dt: float) -> float:
+#         if dt <= 0.0:
+#             dt = 1e-3
+#         proportional = self.kp * error
+#         derivative = 0.0
+#         if self._prev_error is not None:
+#             derivative = self.kd * (error - self._prev_error) / dt
+#         self._prev_error = error
+#         output = proportional + derivative
+#         low, high = self.output_limits
+#         if output > high:
+#             output = high
+#         elif output < low:
+#             output = low
+#         return output
 
 
 class WeightsPositionController:
@@ -92,19 +170,23 @@ class WeightsPositionController:
         self.invert = bool(invert)
         self.torque_floor = int(max(0, torque_floor))
         self.refresh_hz = max(5.0, float(refresh_hz))
-        self.speed_percent = 40.0
+        self.speed_percent = config.PID_LIFT_SPEED_PCT
         self.tolerance_counts = config.WEIGHTS_TOLERANCE_DEFAULT
         self._target = None
+        self._arrive_flag = None
         self._state = "idle"
         self._last_cmd = 0
         self._estopped = False
         self._shutdown = threading.Event()
+        self._pause = threading.Event()
+        self._pause.clear()
         self._lock = threading.Lock()
         self.pid = PIDController(
             config.WEIGHTS_PID_KP,
             config.WEIGHTS_PID_KI,
             config.WEIGHTS_PID_KD,
             output_limits=(-config.MOTORON_MAX, config.MOTORON_MAX),
+            integral_limits=(-config.WEIGHTS_PID_I_LIM, config.WEIGHTS_PID_I_LIM),
         )
         self.pid_deadband = config.WEIGHTS_PID_DEADBAND
         self._min_output = max(0.0, config.WEIGHTS_PID_MIN_OUTPUT)
@@ -173,12 +255,16 @@ class WeightsPositionController:
     def _loop(self):
         sleep_base = 1.0 / self.refresh_hz
         last_time = time.monotonic()
+        i = 0
         while not self._shutdown.is_set():
+            self._pause.wait()
+            # print("Still in the loop")
             now = time.monotonic()
             dt = max(1e-3, now - last_time)
             last_time = now
 
             if self._estopped:
+                # print('The motor is estopped, coasting')
                 self.motor.coast_motor(self.motor_id)
                 self._last_cmd = 0
                 self.pid.reset()
@@ -187,6 +273,7 @@ class WeightsPositionController:
 
             with self._lock:
                 target = self._target
+                # print("Current target:", target)
 
             if target is None:
                 self.motor.set_speed(self.motor_id, 0)
@@ -196,9 +283,12 @@ class WeightsPositionController:
                     self._state = "idle"
                 time.sleep(0.1)
                 continue
-
+            
+            self._arrive_flag = False
             try:
+                # print("Try to get the position")
                 current = self.encoder.get_position()
+                # print("Current position:", current)
             except Exception as exc:
                 self._state = f"encoder error: {exc}"
                 self.motor.coast_motor(self.motor_id)
@@ -209,33 +299,40 @@ class WeightsPositionController:
             error = int(target) - current
             holding = abs(error) <= self.tolerance_counts
             if holding:
+                with self._lock:
+                    self._target = None
+                self._arrive_flag = True
+                # print('Motor is arrived')
                 self._state = "at target"
+                time.sleep(sleep_base)
+                continue
             else:
+                # print("Motor is moving")
                 self._state = "moving_up" if error > 0 else "moving_down"
 
-            cmd = self._compute_pid_command(error, dt, holding=holding)
+            # print("Send speed command")
+            cmd = self._compute_pid_command(error, dt)
             self._last_cmd = cmd
 
-            if cmd == 0 and holding:
-                self.motor.set_speed(self.motor_id, 0)
-                time.sleep(0.1)
-                continue
-
+            # if cmd == 0 and holding:
+            #     self.motor.set_speed(self.motor_id, 0)
+            #     time.sleep(0.1)
+            #     continue
+            # print("Set motor speed", cmd)
             self.motor.set_speed(self.motor_id, cmd)
+            i+=1
+            # print(f"Iteration: {i}")
             time.sleep(sleep_base)
 
-    def _compute_pid_command(self, error: float, dt: float, holding: bool) -> int:
+    def _compute_pid_command(self, error: float, dt: float) -> int:
         output = self.pid.compute(error, dt)
         max_cmd = self._max_output()
         output = max(-max_cmd, min(max_cmd, output))
 
-        if not holding and self._min_output > 0 and abs(output) > 0:
+        if self._min_output > 0 and abs(output) > 0:
             min_out = min(max_cmd, self._min_output)
             if abs(output) < min_out:
                 output = math.copysign(min_out, output)
-
-        if holding and abs(error) <= self.pid_deadband and abs(output) < self._min_output:
-            output = 0.0
 
         if self.invert:
             output = -output

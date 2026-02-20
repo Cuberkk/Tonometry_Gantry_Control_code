@@ -33,8 +33,8 @@ ENCODER_GPIO_A = 6
 ENCODER_GPIO_B = 5
 ENCODER_INVERT = True
 
-ENCODER_CPR = 1200
-PULLEY_DIAMETER_M = 0.029
+ENCODER_CPR = 19 * 64
+PULLEY_DIAMETER_M = 0.027
 
 PULLEY_CIRCUMFERENCE_M = np.pi * PULLEY_DIAMETER_M if PULLEY_DIAMETER_M > 0 else 0.0
 COUNTS_PER_METER = (ENCODER_CPR / PULLEY_CIRCUMFERENCE_M) if PULLEY_CIRCUMFERENCE_M > 0 else 0.0
@@ -97,13 +97,16 @@ if _span <= 0 or _span > WEIGHTS_TRAVEL_DEFAULT * 4:
         WEIGHTS_TOP_DEFAULT = WEIGHTS_BOTTOM_DEFAULT + WEIGHTS_TRAVEL_DEFAULT
     else:
         WEIGHTS_TOP_DEFAULT = WEIGHTS_BOTTOM_DEFAULT - WEIGHTS_TRAVEL_DEFAULT
+
+WEIGHTS_TOP_DEFAULT = 300
 WEIGHTS_SLOW_ZONE_COUNTS = max(1, _load_weight_default("slow_zone_counts", 400))
 WEIGHTS_SLOW_MIN_SCALE = max(0.05, min(1.0, _load_weight_float("slow_zone_scale", 0.25)))
 WEIGHTS_SLOW_TORQUE_FLOOR = max(20, _load_weight_default("slow_zone_torque_floor", 80))
 # Slow-down and retension behavior near bottom to avoid unspooling
-WEIGHTS_BOTTOM_SLOW_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_slow_speed_pct", 30.0)))
+WEIGHTS_BOTTOM_SLOW_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_slow_speed_pct", 10.0)))
 WEIGHTS_BOTTOM_RETENSION_COUNTS = max(0, _load_weight_default("bottom_retension_counts", 10))
-WEIGHTS_BOTTOM_RETENSION_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_retension_speed_pct", 25.0)))
+WEIGHTS_BOTTOM_RETENSION_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_retension_speed_pct", 20.0)))
+PID_LIFT_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("pid_lift_speed_pct", 42.50)))
 
 LVDT_SLOPE = calibration_data.get("LVDT", {}).get("slope", 2.0114)
 LVDT_INTERCEPT = calibration_data.get("LVDT", {}).get("intercept", 0.7342)
@@ -115,7 +118,9 @@ WEIGHTS_PID_KI = float(PID_CFG.get("ki", 0.0))  # Integral unused (PD control)
 WEIGHTS_PID_KD = float(PID_CFG.get("kd", 0.0))
 WEIGHTS_PID_DEADBAND = float(PID_CFG.get("deadband_counts", 2.0))
 WEIGHTS_PID_MIN_OUTPUT = float(PID_CFG.get("min_output", 0.0))
+WEIGHTS_PID_I_LIM = float(PID_CFG.get("integral_limit_counts", 100.0))
 
+MANUAL_DOWN_SPEED_PCT = 5.0
 
 def counts_to_mm(counts: float) -> float:
     return float(counts) * MM_PER_COUNT

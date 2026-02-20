@@ -27,10 +27,10 @@
     "top_counts": 266
   },
   "weights_pid": {
-    "deadband_counts": 8,
-    "kd": 0.402077469912965,
-    "ki": 0.0,
-    "kp": 9.155879872252855,
+    "deadband_counts": 8.0,
+    "kd": 0.04,
+    "ki": 0.1,
+    "kp": 4.0,
     "min_output": 400.0
   }
 }
