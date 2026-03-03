@@ -136,7 +136,7 @@ class ControllerApp(tk.Tk):
         self.btn_log = ttk.Button(top, text="Start Log", command=self.toggle_logging)
         self.btn_log.pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(top, text="Zero Encoder", command=self.zero_weights_encoder).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(top, text="Reset Motoron", command=self.mot.mc.reset()).pack(side=tk.RIGHT, padx=(6, 0))
+        # ttk.Button(top, text="Reset Motoron", command=self.mot.mc.reset()).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(2, 2))
 
         self._weights_card().pack(fill=tk.X, **pad)
