@@ -64,8 +64,8 @@ class ControllerApp(tk.Tk):
         self.pid_min_output = tk.DoubleVar(value=config.WEIGHTS_PID_MIN_OUTPUT)
 
         self.seq_cycles = tk.IntVar(value=3)
-        self.seq_top_dwell = tk.DoubleVar(value=1.0)
-        self.seq_bottom_dwell = tk.DoubleVar(value=1.0)
+        self.seq_top_dwell = tk.DoubleVar(value=2.0)
+        self.seq_bottom_dwell = tk.DoubleVar(value=2.0)
 
         self.weights_tolerance.trace_add("write", lambda *_: self._on_weights_tolerance_change())
 

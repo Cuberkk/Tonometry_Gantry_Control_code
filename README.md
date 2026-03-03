@@ -1,3 +1,28 @@
+# General Ethernet Connection Guidelines
+To connect to the Raspberry Pi from your computer, please ensure that `OpenSSH` and an `X11 server` are installed on your system.
+
+After plugging in the Ethernet cable, open a terminal and run the following command:
+```
+ssh -Y erie@192.168.100.1
+```
+After entering the user password we shared with you, you will be able connect to the raspberry pi.
+
+To launch the Tonometry control GUI, run the following command:
+```
+tonometry-gui
+```
+
+The tonometry-gui alias encapsulates the following sequence of commands:
+```
+tonometry-gui='conda activate tonometry && (pgrep pigpiod > /dev/null || sudo pigpiod) && python /home/erie/Tonometry/device_controller/deviceController2.py'
+```
+
+Specifically, this alias:
+
+1. Activates the `tonometry` Conda environment  
+2. Checks whether the `pigpiod` daemon is running and starts it if necessary  
+3. Executes the Tonometry device controller GUI script  
+
 # Tonometry Gantry/Weights Controller
 
 Python tooling to drive the tonometry gantry and weights using a Motoron controller, encoder, and ADS1115/LVDT input. It includes a  GUI for operation.
