@@ -18,7 +18,7 @@ class AxisManual:
         self.name = name
         self.motor_ids = motor_ids
         self.motor_invert = list(motor_invert)
-        self.speed_percent = 30.0
+        self.speed_percent = 32.0
         self.dir = 0
         self.last_cmd = 0
         self.torque_floor = config.TORQUE_FLOOR if torque_floor is None else int(torque_floor)
@@ -172,11 +172,13 @@ class WeightsPositionController:
         self.refresh_hz = max(5.0, float(refresh_hz))
         self.speed_percent = config.PID_LIFT_SPEED_PCT
         self.tolerance_counts = config.WEIGHTS_TOLERANCE_DEFAULT
+        self.top_holding_speed_pct = config.TOP_HOLDING_SPEED_PCT
         self._target = None
         self._arrive_flag = None
         self._state = "idle"
         self._last_cmd = 0
         self._estopped = False
+        self.pre_target = None
         self._shutdown = threading.Event()
         self._pause = threading.Event()
         self._pause.clear()
@@ -276,7 +278,10 @@ class WeightsPositionController:
                 # print("Current target:", target)
 
             if target is None:
-                self.motor.set_speed(self.motor_id, 0)
+                if self.pre_target is not None and self.pre_target > 0:
+                    self.motor.set_speed(self.motor_id, int((self.top_holding_speed_pct / 100.0) * config.MOTORON_MAX))
+                else:
+                    self.motor.set_speed(self.motor_id, 0)
                 self._last_cmd = 0
                 self.pid.reset()
                 if self._state != "idle":
@@ -284,6 +289,7 @@ class WeightsPositionController:
                 time.sleep(0.1)
                 continue
             
+            self.pre_target = target
             self._arrive_flag = False
             try:
                 # print("Try to get the position")
@@ -304,6 +310,7 @@ class WeightsPositionController:
                 self._arrive_flag = True
                 # print('Motor is arrived')
                 self._state = "at target"
+                
                 time.sleep(sleep_base)
                 continue
             else:

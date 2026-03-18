@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - optional hardware
 class Motoron:
     def __init__(self, address=config.MOTORON_ADDR, bus=config.I2C_BUS):
         self.mc = MotoronI2C(address=address, bus=bus)
+        # self.mc.reset()
         self.mc.reinitialize()
         self.mc.disable_crc()
         self.mc.clear_reset_flag()

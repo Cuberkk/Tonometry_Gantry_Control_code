@@ -98,7 +98,7 @@ if _span <= 0 or _span > WEIGHTS_TRAVEL_DEFAULT * 4:
     else:
         WEIGHTS_TOP_DEFAULT = WEIGHTS_BOTTOM_DEFAULT - WEIGHTS_TRAVEL_DEFAULT
 
-WEIGHTS_TOP_DEFAULT = 270
+WEIGHTS_TOP_DEFAULT = 300
 WEIGHTS_SLOW_ZONE_COUNTS = max(1, _load_weight_default("slow_zone_counts", 400))
 WEIGHTS_SLOW_MIN_SCALE = max(0.05, min(1.0, _load_weight_float("slow_zone_scale", 0.25)))
 WEIGHTS_SLOW_TORQUE_FLOOR = max(20, _load_weight_default("slow_zone_torque_floor", 80))
@@ -106,7 +106,8 @@ WEIGHTS_SLOW_TORQUE_FLOOR = max(20, _load_weight_default("slow_zone_torque_floor
 WEIGHTS_BOTTOM_SLOW_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_slow_speed_pct", 10.0)))
 WEIGHTS_BOTTOM_RETENSION_COUNTS = max(0, _load_weight_default("bottom_retension_counts", 10))
 WEIGHTS_BOTTOM_RETENSION_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("bottom_retension_speed_pct", 20.0)))
-PID_LIFT_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("pid_lift_speed_pct", 40.5)))
+PID_LIFT_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("pid_lift_speed_pct", 41)))
+TOP_HOLDING_SPEED_PCT = max(5.0, min(100.0, _load_weight_float("top_lift_speed_pct", 25)))
 
 LVDT_SLOPE = calibration_data.get("LVDT", {}).get("slope", 2.0114)
 LVDT_INTERCEPT = calibration_data.get("LVDT", {}).get("intercept", 0.7342)

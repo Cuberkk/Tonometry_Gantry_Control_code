@@ -15,6 +15,9 @@ from . import config
 from .controllers import AxisManual, WeightsPositionController
 from .hardware import ADCReader, Motoron, QuadratureEncoder
 
+from collections import deque
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 class ControllerApp(tk.Tk):
     def __init__(self):
@@ -94,6 +97,8 @@ class ControllerApp(tk.Tk):
         self.after(int(1000.0 / config.VIN_REFRESH_HZ), self._refresh_vin)
         if self.adc.enabled:
             self.after(200, self._refresh_adc)
+            self.after(200, self._refresh_adc_plot)
+
         self.after(100, self._refresh_weights_status)
         self.after(200, self._refresh_sequence_label)
         self.after(100, self._poll_sequence_thread)
@@ -107,6 +112,12 @@ class ControllerApp(tk.Tk):
         pad = {"padx": 8, "pady": 6}
         top = ttk.Frame(self)
         top.pack(fill=tk.X, **pad)
+
+        self.adc_plot_window_sec = 30.0   # Resent 20 seconds
+        self.adc_plot_dt = 0.05          # dt = 50ms
+        self.adc_time_buf = deque()
+        self.adc_pos_buf = deque()
+        self.adc_plot_t0 = time.time()
 
         self.lbl_status = ttk.Label(top, text="Ready")
         self.lbl_status.pack(side=tk.LEFT)
@@ -142,6 +153,25 @@ class ControllerApp(tk.Tk):
         self._weights_card().pack(fill=tk.X, **pad)
         self._axis_card(self.gantry).pack(fill=tk.X, **pad)
         self._sequence_panel().pack(fill=tk.X, **pad)
+        self._adc_plot_panel().pack(fill=tk.BOTH, expand=True, **pad)
+
+    def _adc_plot_panel(self):
+        f = ttk.LabelFrame(self, text="ADC Latest Position Time Series")
+
+        self.adc_fig = Figure(figsize=(8, 3), dpi=100)
+        self.adc_ax = self.adc_fig.add_subplot(111)
+        self.adc_ax.set_title("LVDT Position")
+        self.adc_ax.set_xlabel("Time (s)")
+        self.adc_ax.set_ylabel("Position (mm)")
+        self.adc_ax.grid(True)
+
+        self.adc_line, = self.adc_ax.plot([], [])
+
+        self.adc_canvas = FigureCanvasTkAgg(self.adc_fig, master=f)
+        self.adc_canvas.draw()
+        self.adc_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        return f
 
     def _weights_card(self):
         f = ttk.LabelFrame(self, text="Weights (Motor 1)")
@@ -246,21 +276,21 @@ class ControllerApp(tk.Tk):
         self.btn_weights_stop.pack(side=tk.LEFT)
         ttk.Button(row5, text="Save Targets", command=self._save_weights_targets).pack(side=tk.LEFT, padx=(12, 0))
 
-        row6 = ttk.LabelFrame(f, text="PD Gains")
-        row6.pack(fill=tk.X, padx=8, pady=(4, 8))
+        # row6 = ttk.LabelFrame(f, text="PD Gains")
+        # row6.pack(fill=tk.X, padx=8, pady=(4, 8))
 
-        ttk.Label(row6, text="Kp:").grid(row=0, column=0, padx=(4, 2), pady=2)
-        tk.Entry(row6, width=8, textvariable=self.pid_kp).grid(row=0, column=1, padx=(0, 8))
-        ttk.Label(row6, text="Ki:").grid(row=0, column=2, padx=(4, 2))
-        tk.Entry(row6, width=8, textvariable=self.pid_ki).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(row6, text="Kd:").grid(row=0, column=4, padx=(4, 2))
-        tk.Entry(row6, width=8, textvariable=self.pid_kd).grid(row=0, column=5, padx=(0, 8))
+        # ttk.Label(row6, text="Kp:").grid(row=0, column=0, padx=(4, 2), pady=2)
+        # tk.Entry(row6, width=8, textvariable=self.pid_kp).grid(row=0, column=1, padx=(0, 8))
+        # ttk.Label(row6, text="Ki:").grid(row=0, column=2, padx=(4, 2))
+        # tk.Entry(row6, width=8, textvariable=self.pid_ki).grid(row=0, column=3, padx=(0, 8))
+        # ttk.Label(row6, text="Kd:").grid(row=0, column=4, padx=(4, 2))
+        # tk.Entry(row6, width=8, textvariable=self.pid_kd).grid(row=0, column=5, padx=(0, 8))
 
-        ttk.Label(row6, text="Deadband (cnt):").grid(row=1, column=0, padx=(4, 2), pady=2, columnspan=2, sticky="w")
-        tk.Entry(row6, width=8, textvariable=self.pid_deadband).grid(row=1, column=2, padx=(0, 8))
-        ttk.Label(row6, text="Min Output:").grid(row=1, column=3, padx=(4, 2))
-        tk.Entry(row6, width=8, textvariable=self.pid_min_output).grid(row=1, column=4, padx=(0, 8))
-        ttk.Button(row6, text="Save PD", command=self._save_pid_settings).grid(row=1, column=5, padx=(4, 4))
+        # ttk.Label(row6, text="Deadband (cnt):").grid(row=1, column=0, padx=(4, 2), pady=2, columnspan=2, sticky="w")
+        # tk.Entry(row6, width=8, textvariable=self.pid_deadband).grid(row=1, column=2, padx=(0, 8))
+        # ttk.Label(row6, text="Min Output:").grid(row=1, column=3, padx=(4, 2))
+        # tk.Entry(row6, width=8, textvariable=self.pid_min_output).grid(row=1, column=4, padx=(0, 8))
+        # ttk.Button(row6, text="Save PD", command=self._save_pid_settings).grid(row=1, column=5, padx=(4, 4))
 
         if self.encoder_error:
             ttk.Label(f, text=f"Encoder unavailable: {self.encoder_error}", foreground="#c62828").pack(fill=tk.X, padx=8, pady=(0, 8))
@@ -342,6 +372,41 @@ class ControllerApp(tk.Tk):
 
     # ---------- callbacks ----------
 
+    def _refresh_adc_plot(self):
+        if not self.adc.enabled:
+            return
+
+        now = time.time() - self.adc_plot_t0
+        pos = self.adc.latest_pos
+
+        self.adc_time_buf.append(now)
+        self.adc_pos_buf.append(pos)
+
+        # Only keep recent data within the plot window
+        while self.adc_time_buf and (now - self.adc_time_buf[0] > self.adc_plot_window_sec):
+            self.adc_time_buf.popleft()
+            self.adc_pos_buf.popleft()
+
+        x = list(self.adc_time_buf)
+        y = list(self.adc_pos_buf)
+
+        if x:
+            self.adc_line.set_data(x, y)
+
+            self.adc_ax.set_xlim(max(0, x[0]), max(self.adc_plot_window_sec, x[-1]))
+
+            y_min = 0
+            y_max = 30
+            if abs(y_max - y_min) < 1e-6:
+                pad = 0.5
+            else:
+                pad = 0.1 * (y_max - y_min)
+            self.adc_ax.set_ylim(y_min - pad, y_max + pad)
+
+            self.adc_canvas.draw_idle()
+
+        self.after(int(self.adc_plot_dt * 1000), self._refresh_adc_plot)
+
     def manual_control_enabled_loop(self) -> bool:
         while True:
             if not self.weights_controller:
@@ -351,7 +416,6 @@ class ControllerApp(tk.Tk):
             else:
                 self.weights_controller._pause.set()
             time.sleep(0.05)
-
 
     def _on_weight_speed(self, value: str):
         if self.weights_controller:
